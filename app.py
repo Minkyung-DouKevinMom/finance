@@ -262,8 +262,9 @@ def page_accounts():
         st.markdown("---")
         st.markdown("#### 계좌 수정 / 삭제")
         if accounts:
+            sorted_accounts = sorted(accounts, key=lambda a: a["id"])
             opts = {f"#{a['id']} {a['name']} ({a['owner_name']})": a["id"]
-                    for a in accounts}
+                    for a in sorted_accounts}
             label = st.selectbox("수정할 계좌", list(opts.keys()))
             account_id = opts[label]
             _account_form(account_id=account_id)

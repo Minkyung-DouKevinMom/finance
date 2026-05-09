@@ -120,10 +120,31 @@ def get_conn():
 
 
 def init_db():
-    """스키마 생성 + 기본 마스터 시드. 이미 데이터가 있으면 건드리지 않는다."""
+    """
+    스키마 생성 + 기본 마스터 시드.
+    시드는 최초 1회만 실행 (DB 내 seeded 플래그로 판단).
+    이후 앱 재시작 시에는 삭제한 항목이 되살아나지 않는다.
+    """
     with get_conn() as conn:
+        # 스키마 생성
         conn.executescript(SCHEMA_SQL)
 
+        # 시드 완료 여부를 저장하는 설정 테이블 (없으면 생성)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS _app_settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+
+        already_seeded = conn.execute(
+            "SELECT value FROM _app_settings WHERE key = 'seeded'"
+        ).fetchone()
+
+        if already_seeded:
+            return  # 이미 시드 완료 → 아무것도 하지 않음
+
+        # ── 최초 1회만 실행 ──────────────────────────────
         # 소유자 시드
         for name in SEED_OWNERS:
             conn.execute(
@@ -148,6 +169,11 @@ def init_db():
                        VALUES (?, ?, ?)""",
                     (cat["id"], sub_name, order),
                 )
+
+        # 시드 완료 플래그 저장
+        conn.execute(
+            "INSERT OR REPLACE INTO _app_settings(key, value) VALUES ('seeded', '1')"
+        )
 
 
 if __name__ == "__main__":
