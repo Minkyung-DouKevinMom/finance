@@ -328,12 +328,6 @@ def _account_form(account_id=None):
             value=float(existing["monthly_premium"]) if existing and existing["monthly_premium"] else 0.0,
             step=100.0,
         )
-        expected_payout = m2.number_input(
-            "예상 수령액(만원)",
-            value=float(existing["expected_payout"]) if existing and existing["expected_payout"] else 0.0,
-            step=100.0,
-            help="연금: 월/연 수령액 / 일시불: 총액",
-        )
         PAYOUT_OPTIONS = ["monthly", "yearly", "lumpsum"]
         PAYOUT_LABELS  = {"monthly": "월 수령", "yearly": "연 수령", "lumpsum": "일시불"}
         cur_payout = existing["payout_type"] if existing and existing["payout_type"] in PAYOUT_OPTIONS else "monthly"
@@ -342,6 +336,17 @@ def _account_form(account_id=None):
             options=PAYOUT_OPTIONS,
             format_func=lambda x: PAYOUT_LABELS.get(x, x),
             index=PAYOUT_OPTIONS.index(cur_payout),
+        )
+        PAYOUT_HELP = {
+            "monthly": "월 수령액을 입력하세요 (예: 매월 30만원 → 30)",
+            "yearly":  "연 수령액을 입력하세요 (예: 매년 360만원 → 360)",
+            "lumpsum": "일시불 총 수령 예상액을 입력하세요",
+        }
+        expected_payout = m2.number_input(
+            "예상 수령액(만원)",
+            value=float(existing["expected_payout"]) if existing and existing["expected_payout"] else 0.0,
+            step=10.0,
+            help=PAYOUT_HELP.get(cur_payout, ""),
         )
 
         status = st.selectbox(
@@ -399,10 +404,11 @@ def page_pension():
     accounts = repo.list_accounts(active_only=True)
     pension_accounts = [
         a for a in accounts
-        if a["expected_payout"] and a["expected_payout"] > 0
+        if "연금" in a["subcategory_name"]
+        and a["expected_payout"] and a["expected_payout"] > 0
     ]
     if not pension_accounts:
-        st.info("예상 수령액이 입력된 계좌가 없습니다. **계좌 관리**에서 입력해 주세요.")
+        st.info("과목명에 '연금'이 포함되고 예상 수령액이 입력된 계좌가 없습니다. **계좌 관리**에서 확인해 주세요.")
         return
 
     today = date.today()
@@ -448,10 +454,14 @@ def page_pension():
     df["예상수령액(만원)"] = df["예상수령액(만원)"].apply(fmt_won)
     st.dataframe(df, hide_index=True, use_container_width=True)
 
-    # 연도별 월 환산 수령 추이 (연 수령은 ÷12 해서 합산)
+    # 연도별 월 환산 수령 추이
     st.markdown("---")
     st.markdown("### 연도별 월 환산 수령 추이")
-    st.caption("연 수령 상품은 ÷ 12 하여 월 환산 합계에 포함합니다.")
+    st.caption(
+        "**입력 기준**: 월 수령 → 입력값 그대로 / 연 수령 → ÷ 12 / 일시불 → 그래프 미포함\n\n"
+        "물가상승률은 반영하지 않으며, 현재 예상 수령액 기준으로 표시됩니다."
+    )
+
     timeline = []
     for y in range(today.year, today.year + 41):
         d = date(y, 1, 1)
@@ -461,12 +471,36 @@ def page_pension():
             if not payout_d or payout_d > d:
                 continue
             if a["payout_type"] == "monthly":
-                m_sum += a["expected_payout"]
+                m_sum += a["expected_payout"]          # 월 수령액 그대로
             elif a["payout_type"] == "yearly":
-                m_sum += a["expected_payout"] / 12
+                m_sum += a["expected_payout"] / 12     # 연 수령액 ÷ 12
+            # lumpsum은 월 환산 불가 → 제외
         timeline.append({"연도": y, "월 환산 수령(만원)": round(m_sum, 1)})
-    tdf = pd.DataFrame(timeline).set_index("연도")
-    st.line_chart(tdf)
+
+    tdf = pd.DataFrame(timeline)
+
+    import plotly.graph_objects as go
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=tdf["연도"],
+        y=tdf["월 환산 수령(만원)"],
+        mode="lines+markers",
+        line=dict(width=2, color="#4C9BE8"),
+        marker=dict(size=5),
+        hovertemplate="%{x}년: %{y}만원<extra></extra>",
+    ))
+    fig.update_layout(
+        xaxis_title="연도",
+        yaxis_title="월 환산 수령(만원)",
+        xaxis=dict(fixedrange=True),   # x축 zoom 비활성화
+        yaxis=dict(fixedrange=True),   # y축 zoom 비활성화
+        dragmode=False,                # 드래그 비활성화
+        margin=dict(l=0, r=0, t=20, b=0),
+        height=350,
+    )
+    st.plotly_chart(fig, use_container_width=True, config={
+        "displayModeBar": False,       # 툴바 완전 숨김 (zoom 버튼 포함)
+    })
 
 
 # =========================================================
