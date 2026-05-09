@@ -146,6 +146,16 @@ def get_or_create_snapshot(snapshot_date, memo=None):
         return {"id": cur.lastrowid, "snapshot_date": snapshot_date, "memo": memo}
 
 
+def delete_balances(snapshot_id, account_ids):
+    """특정 스냅샷에서 선택한 계좌들의 잔액 기록만 삭제."""
+    with get_conn() as c:
+        for aid in account_ids:
+            c.execute(
+                "DELETE FROM balance WHERE snapshot_id = ? AND account_id = ?",
+                (snapshot_id, aid),
+            )
+
+
 def delete_snapshot(snapshot_id):
     with get_conn() as c:
         c.execute("DELETE FROM snapshot WHERE id = ?", (snapshot_id,))

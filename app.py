@@ -113,82 +113,121 @@ def page_snapshot():
             memo = st.text_input("메모 (선택)")
             submitted = st.form_submit_button("생성")
             if submitted:
-                # 항상 1일로 정규화 (월별 기록이라서)
                 d = d.replace(day=1)
-                snap = repo.get_or_create_snapshot(d.isoformat(), memo)
+                repo.get_or_create_snapshot(d.isoformat(), memo)
                 st.success(f"{d.strftime('%Y-%m')} 스냅샷 준비 완료. 다시 선택해 주세요.")
                 st.rerun()
         return
 
     snap = next(s for s in snapshots if s["snapshot_date"][:7] == pick)
-    st.caption(f"DB ID: {snap['id']} · 날짜: {snap['snapshot_date']}")
 
     df = repo.get_balances_for_snapshot(snap["id"])
     if df.empty:
         st.warning("등록된 활성 계좌가 없습니다. 먼저 **계좌 관리**에서 상품을 등록해 주세요.")
         return
 
-    st.markdown("#### 잔액 입력 (만원 단위)")
-    st.caption("표 안에서 **금액**만 수정한 뒤 아래 **저장** 버튼을 눌러 주세요.")
+    tab_edit, tab_delete = st.tabs(["✏️ 금액 수정", "🗑️ 항목 삭제"])
 
-    edit_df = df[[
-        "category_name", "subcategory_name", "owner_name",
-        "account_name", "product_name", "status", "amount", "account_id"
-    ]].rename(columns={
-        "category_name": "자산구분",
-        "subcategory_name": "과목",
-        "owner_name": "소유자",
-        "account_name": "항목",
-        "product_name": "상품명",
-        "status": "납입상태",
-        "amount": "금액(만원)",
-    })
+    # ── 탭 1: 금액 수정 ──────────────────────────────────
+    with tab_edit:
+        st.caption("표 안에서 **금액(만원)** 셀을 직접 클릭해 수정한 뒤 **저장** 버튼을 눌러 주세요.")
 
-    edited = st.data_editor(
-        edit_df,
-        hide_index=True,
-        use_container_width=True,
-        disabled=["자산구분", "과목", "소유자", "항목", "상품명", "납입상태", "account_id"],
-        column_config={
-            "account_id": None,  # 숨김
-            "금액(만원)": st.column_config.NumberColumn(format="%d", min_value=-999999),
-        },
-        key=f"editor_{snap['id']}",
-    )
+        edit_df = df[[
+            "category_name", "subcategory_name", "owner_name",
+            "account_name", "product_name", "status", "amount", "account_id"
+        ]].rename(columns={
+            "category_name": "자산구분",
+            "subcategory_name": "과목",
+            "owner_name": "소유자",
+            "account_name": "항목",
+            "product_name": "상품명",
+            "status": "납입상태",
+            "amount": "금액(만원)",
+        })
 
-    c1, c2, c3 = st.columns([1, 1, 4])
-    if c1.button("💾 저장", type="primary"):
-        repo.save_balances(
-            snap["id"],
-            [{"account_id": int(r["account_id"]), "amount": float(r["금액(만원)"] or 0)}
-             for _, r in edited.iterrows()],
+        edited = st.data_editor(
+            edit_df,
+            hide_index=True,
+            use_container_width=True,
+            disabled=["자산구분", "과목", "소유자", "항목", "상품명", "납입상태", "account_id"],
+            column_config={
+                "account_id": None,
+                "금액(만원)": st.column_config.NumberColumn(format="%d", min_value=-999999),
+            },
+            key=f"editor_{snap['id']}",
         )
-        st.success("저장되었습니다.")
-        st.rerun()
 
-    if c2.button("🗑️ 이 스냅샷 삭제"):
-        repo.delete_snapshot(snap["id"])
-        st.success("삭제되었습니다.")
-        st.rerun()
+        # 저장 / 스냅샷 삭제 버튼
+        c1, c2, c3 = st.columns([1, 1, 4])
+        if c1.button("💾 저장", type="primary"):
+            repo.save_balances(
+                snap["id"],
+                [{"account_id": int(r["account_id"]), "amount": float(r["금액(만원)"] or 0)}
+                 for _, r in edited.iterrows()],
+            )
+            st.success("저장되었습니다.")
+            st.rerun()
 
-    # 요약
-    st.markdown("---")
-    st.markdown("#### 합계")
-    by_cat = edited.groupby("자산구분", as_index=False)["금액(만원)"].sum()
-    by_cat["금액(만원)"] = by_cat["금액(만원)"].apply(fmt_won)
-    by_sub = edited.groupby(["자산구분", "과목"], as_index=False)["금액(만원)"].sum()
-    by_sub["금액(만원)"] = by_sub["금액(만원)"].apply(fmt_won)
+        if c2.button("🗑️ 이 스냅샷 전체 삭제"):
+            repo.delete_snapshot(snap["id"])
+            st.success("스냅샷이 삭제되었습니다.")
+            st.rerun()
 
-    cc1, cc2 = st.columns(2)
-    with cc1:
-        st.write("**자산구분 합계**")
-        st.dataframe(by_cat, hide_index=True, use_container_width=True)
-    with cc2:
-        st.write("**과목 합계**")
-        st.dataframe(by_sub, hide_index=True, use_container_width=True)
+        # 합계 요약
+        st.markdown("---")
+        st.markdown("#### 합계")
+        by_cat = edited.groupby("자산구분", as_index=False)["금액(만원)"].sum()
+        by_cat["금액(만원)"] = by_cat["금액(만원)"].apply(fmt_won)
+        by_sub = edited.groupby(["자산구분", "과목"], as_index=False)["금액(만원)"].sum()
+        by_sub["금액(만원)"] = by_sub["금액(만원)"].apply(fmt_won)
 
-    total = edited["금액(만원)"].sum()
-    st.metric("총자산 (만원)", fmt_won(total))
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            st.write("**자산구분 합계**")
+            st.dataframe(by_cat, hide_index=True, use_container_width=True)
+        with cc2:
+            st.write("**과목 합계**")
+            st.dataframe(by_sub, hide_index=True, use_container_width=True)
+
+        st.metric("총자산 (만원)", fmt_won(edited["금액(만원)"].sum()))
+
+    # ── 탭 2: 개별 항목 삭제 ────────────────────────────
+    with tab_delete:
+        st.caption("이 시점에서 **특정 항목의 잔액 기록만** 삭제합니다. 계좌 마스터는 유지됩니다.")
+
+        # 잔액이 실제로 기록된 항목만 표시 (amount > 0 또는 balance 레코드 존재)
+        has_balance_df = df[df["amount"] != 0].copy()
+        if has_balance_df.empty:
+            st.info("삭제할 잔액 기록이 없습니다.")
+        else:
+            # 삭제 대상 선택 (멀티셀렉트)
+            options_map = {
+                f"{r['owner_name']} | {r['category_name']} > {r['subcategory_name']} | {r['account_name']} ({int(r['amount']):,}만원)": int(r["account_id"])
+                for _, r in has_balance_df.iterrows()
+            }
+            selected_labels = st.multiselect(
+                "삭제할 항목 선택 (복수 선택 가능)",
+                options=list(options_map.keys()),
+            )
+
+            if selected_labels:
+                st.warning(f"선택된 {len(selected_labels)}개 항목의 **이 시점 잔액 기록**이 삭제됩니다.")
+                if st.button("🗑️ 선택 항목 삭제", type="primary"):
+                    selected_ids = [options_map[l] for l in selected_labels]
+                    repo.delete_balances(snap["id"], selected_ids)
+                    st.success(f"{len(selected_ids)}개 항목 삭제 완료.")
+                    st.rerun()
+
+        st.markdown("---")
+        st.markdown("#### 전체 항목 목록 (현재 시점)")
+        view_df = df[[
+            "owner_name", "category_name", "subcategory_name", "account_name", "amount"
+        ]].rename(columns={
+            "owner_name": "소유자", "category_name": "자산구분",
+            "subcategory_name": "과목", "account_name": "항목", "amount": "금액(만원)"
+        }).copy()
+        view_df["금액(만원)"] = view_df["금액(만원)"].apply(fmt_won)
+        st.dataframe(view_df, hide_index=True, use_container_width=True)
 
 
 # =========================================================
@@ -265,13 +304,20 @@ def _account_form(account_id=None):
                                      value=existing["product_name"] if existing else "")
 
         d1, d2, d3 = st.columns(3)
+        DATE_MIN = date(1980, 1, 1)
+        DATE_MAX = date(date.today().year + 50, 12, 31)
         start_date = d1.date_input(
-            "시작일", value=parse_date_safely(existing["start_date"] if existing else None))
+            "시작일",
+            value=parse_date_safely(existing["start_date"] if existing else None),
+            min_value=DATE_MIN, max_value=DATE_MAX)
         maturity_date = d2.date_input(
-            "만기일", value=parse_date_safely(existing["maturity_date"] if existing else None))
+            "만기일",
+            value=parse_date_safely(existing["maturity_date"] if existing else None),
+            min_value=DATE_MIN, max_value=DATE_MAX)
         payout_start_date = d3.date_input(
             "연금 개시일",
             value=parse_date_safely(existing["payout_start_date"] if existing else None),
+            min_value=DATE_MIN, max_value=DATE_MAX,
             help="연금 수령이 시작되는 날짜. 연금 시뮬레이션에 사용됩니다.",
         )
 
@@ -285,13 +331,16 @@ def _account_form(account_id=None):
             "예상 수령액(만원)",
             value=float(existing["expected_payout"]) if existing and existing["expected_payout"] else 0.0,
             step=100.0,
-            help="연금: 월 수령액 / 일시불: 총액",
+            help="연금: 월/연 수령액 / 일시불: 총액",
         )
+        PAYOUT_OPTIONS = ["monthly", "yearly", "lumpsum"]
+        PAYOUT_LABELS  = {"monthly": "월 수령", "yearly": "연 수령", "lumpsum": "일시불"}
+        cur_payout = existing["payout_type"] if existing and existing["payout_type"] in PAYOUT_OPTIONS else "monthly"
         payout_type = m3.selectbox(
             "수령 형태",
-            options=["monthly", "lumpsum"],
-            format_func=lambda x: "월 수령" if x == "monthly" else "일시불",
-            index=0 if not existing or existing["payout_type"] == "monthly" else 1,
+            options=PAYOUT_OPTIONS,
+            format_func=lambda x: PAYOUT_LABELS.get(x, x),
+            index=PAYOUT_OPTIONS.index(cur_payout),
         )
 
         status = st.selectbox(
@@ -364,7 +413,9 @@ def page_pension():
 
     rows = []
     monthly_total = 0.0
+    yearly_total  = 0.0
     lumpsum_total = 0.0
+    PAYOUT_LABELS = {"monthly": "월 수령", "yearly": "연 수령", "lumpsum": "일시불"}
     for a in pension_accounts:
         payout_d = parse_date_safely(a["payout_start_date"])
         started = payout_d is not None and payout_d <= target_date
@@ -373,39 +424,46 @@ def page_pension():
             "항목": a["name"],
             "상품명": a["product_name"] or "",
             "개시일": a["payout_start_date"] or "-",
-            "수령형태": "월 수령" if a["payout_type"] == "monthly" else "일시불",
+            "수령형태": PAYOUT_LABELS.get(a["payout_type"], a["payout_type"]),
             "예상수령액(만원)": a["expected_payout"],
             "수령시작?": "✅" if started else "—",
         })
         if started:
             if a["payout_type"] == "monthly":
                 monthly_total += a["expected_payout"]
+            elif a["payout_type"] == "yearly":
+                yearly_total += a["expected_payout"]
             else:
                 lumpsum_total += a["expected_payout"]
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("조회 시점", target_date.strftime("%Y-%m"))
     c2.metric("월 수령 합계 (만원)", fmt_won(monthly_total))
-    c3.metric("일시불 누적 (만원)", fmt_won(lumpsum_total))
+    c3.metric("연 수령 합계 (만원)", fmt_won(yearly_total),
+              help="연 수령액 ÷ 12 = 월 환산 " + fmt_won(yearly_total / 12 if yearly_total else 0) + "만원")
+    c4.metric("일시불 누적 (만원)", fmt_won(lumpsum_total))
 
     df = pd.DataFrame(rows)
     df["예상수령액(만원)"] = df["예상수령액(만원)"].apply(fmt_won)
     st.dataframe(df, hide_index=True, use_container_width=True)
 
-    # 연도별 월수령 변화
+    # 연도별 월 환산 수령 추이 (연 수령은 ÷12 해서 합산)
     st.markdown("---")
-    st.markdown("### 연도별 월 수령 추이")
+    st.markdown("### 연도별 월 환산 수령 추이")
+    st.caption("연 수령 상품은 ÷ 12 하여 월 환산 합계에 포함합니다.")
     timeline = []
     for y in range(today.year, today.year + 41):
         d = date(y, 1, 1)
         m_sum = 0.0
         for a in pension_accounts:
-            if a["payout_type"] != "monthly":
-                continue
             payout_d = parse_date_safely(a["payout_start_date"])
-            if payout_d and payout_d <= d:
+            if not payout_d or payout_d > d:
+                continue
+            if a["payout_type"] == "monthly":
                 m_sum += a["expected_payout"]
-        timeline.append({"연도": y, "월 수령(만원)": m_sum})
+            elif a["payout_type"] == "yearly":
+                m_sum += a["expected_payout"] / 12
+        timeline.append({"연도": y, "월 환산 수령(만원)": round(m_sum, 1)})
     tdf = pd.DataFrame(timeline).set_index("연도")
     st.line_chart(tdf)
 
